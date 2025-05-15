@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mujoco model="chessboard_ground">
+    <option gravity="0 0 -9.81" timestep="0.001" />
+
+    <asset>
+        <texture name="chessboard" type="2d" builtin="checker" rgb1="0.9 0.9 0.9" rgb2="0.3 0.3 0.3" width="100" height="100"/>
+        <material name="chessboard_material" texture="chessboard" texrepeat="1 1" texuniform="true"/>
+        <material name="sphere_material" rgba="1 0.2 0.2 1"/>
+        <material name="cube_material" rgba="0.2 0.2 1 1"/>
+        <material name="wall_material" rgba="0.5 0.5 0.7 1"/>
+        <material name="nose_material" rgba="0 1 0 1"/>
+    </asset>
+    
+    <worldbody>
+        <geom name="ground" type="plane" size="50 50 0.1" pos="0 0 0" material="chessboard_material"/>
+
+        <light name="light1" pos="0 0 500" dir="0 0 -1" diffuse="0.8 0.8 0.8" specular="0.1 0.1 0.1" castshadow="true"/>
+        
+        <body name="cube_body" pos="0 0 1">
+            <geom name="cube" type="box" size="1 1 1" mass="1.0" material="cube_material" contype="1" conaffinity="1"/>
+            <joint name="slider_x" type="slide" axis="1 0 0"/>
+            <joint name="slider_y" type="slide" axis="0 1 0"/>
+            <joint name="hinge_z" type="hinge" axis="0 0 1"/>
+            <geom name="nose" type="cylinder" size="0.1 0.7" mass="0.1" pos="1 0 0.5" euler="0 90 0" material="nose_material"/>
+        </body>
+    
+        <geom name="sphere" type="sphere" size="1" pos="0 0 1" material="sphere_material"/>
+        <geom name="wall_north" type="box" size="17.5 0.5 2" pos="0 17.5 2" material="wall_material"/>
+        <geom name="wall_south" type="box" size="17.5 0.5 2" pos="0 -17.5 2" material="wall_material"/>
+        <geom name="wall_east" type="box" size="0.5 17.5 2" pos="17.5 0 2" material="wall_material"/>
+        <geom name="wall_west" type="box" size="0.5 17.5 2" pos="-17.5 0 2" material="wall_material"/>
+    </worldbody>
+
+    <sensor>
+        <framepos name="cube_pos" objtype="geom" objname="cube"/>
+        <framepos name="sphere_pos" objtype="geom" objname="sphere"/>
+    </sensor>
+
+    <visual>
+        <global offwidth="800" offheight="600"/>
+        <quality shadowsize="2048"/>
+        <headlight ambient="0.3 0.3 0.3" diffuse="0.7 0.7 0.7" specular="0.1 0.1 0.1"/>
+        <map znear="0.01"/>
+        <scale forcewidth="0.01" contactwidth="0.05" contactheight="0.05" jointwidth="0.05" framelength="0.2" framewidth="0.02"/>
+        <rgba contactpoint="0 0.9 0 0.7" contactforce="0 0.5 0.3 0.1"/>
+    </visual>
+</mujoco>
