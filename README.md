@@ -25,3 +25,12 @@ The agent perceives its surroundings through simulated **laser sensor data**, wh
    ```bash
    git clone https://github.com/otr-ebla/CubeNav-RL.git
    cd CubeNav-RL
+
+## 🧪 Evaluation / Testing
+
+After training, you can evaluate a saved model using the provided training script with the `--eval` flag.
+
+### 🔧 Example Command
+
+```bash
+python3 training/SB3_train.py --eval --num_rays 108 --run_id MoreTO --trainer TQC
