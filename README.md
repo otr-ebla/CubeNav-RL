@@ -2,6 +2,8 @@
 
 This repository contains code for training a mobile robot agent to navigate through a  3D environment filled with randomly placed static cubes using various Deep Reinforcement Learning algorithms.
 
+![Navigation Demo](assets/demo.gif)
+
 ## 🧠 Introduction
 
 The goal of this project is to develop an autonomous reinforcement learning (RL) agent capable of navigating complex environments while avoiding obstacles. The environment consists of a bounded area with randomly generated static cubes representing obstacles. The agent’s objective is to reach a target location without collisions.
