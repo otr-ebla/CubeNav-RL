@@ -1,4 +1,5 @@
-import gym
+import gymnasium as gym
+
 import collections
 import warnings
 from functools import partial

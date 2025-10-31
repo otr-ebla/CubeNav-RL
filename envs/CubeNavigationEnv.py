@@ -72,6 +72,8 @@ class CubeNavigationEnv_class(gym.Env):
         
         # Load MuJoCo model
         self.xml_model = self._load_and_modify_xml_model()
+                
+        # Load model with asset directory set
         self.model = mujoco.MjModel.from_xml_string(self.xml_model)
         self.data = mujoco.MjData(self.model)
         
@@ -93,12 +95,29 @@ class CubeNavigationEnv_class(gym.Env):
         self.reset()
     
     def _load_and_modify_xml_model(self):
-        """Load and modify the XML model."""
+        """Load and modify the XML model with proper asset path resolution."""
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"Model file {self.model_path} not found.")
         
         tree = ET.parse(self.model_path)
         root = tree.getroot()
+
+        # Get the project root directory
+        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_file_dir)
+        assets_dir = os.path.join(project_root, "assets")
+
+        # Fix asset paths (same as before)
+        asset_element = root.find("asset")
+        if asset_element is not None:
+            for mesh in asset_element.findall("mesh"):
+                file_attr = mesh.get("file")
+                if file_attr:
+                    filename = os.path.basename(file_attr)
+                    correct_path = os.path.join(assets_dir, filename)
+                    if os.path.exists(correct_path):
+                        mesh.set("file", correct_path)
+                        print(f"✅ Updated mesh path: {correct_path}")
 
         cube_body = None
         for body in root.findall(".//body"):
@@ -117,28 +136,26 @@ class CubeNavigationEnv_class(gym.Env):
         if sensor is None:
             raise ValueError("Sensor element not found in the XML model.")
 
-        # Add LiDAR sensors to the cube body
+        # Create 360° LiDAR sensors with first ray pointing forward
         for i in range(self.num_rays): 
-            angle = (-np.pi / self.num_rays) * i + np.pi / 2  
-            #angle = 2*np.pi * i / self.num_rays  # Start from the right
-            angle = (angle + np.pi) % (2 * np.pi) - np.pi  # Normalize to [-pi, pi]
-
+            # Evenly distribute rays around 360°, starting from forward (0°) 
+            angle = 2 * np.pi * i / self.num_rays
+            
             cos_angle = np.cos(angle)
             sin_angle = np.sin(angle)
 
             site = ET.SubElement(cube_body, "site")
             site.set("name", f"lidar_site_{i}")
-            #site.set("pos", f"{np.sqrt(2)*cos_angle} {np.sqrt(2)*sin_angle} -0.3")
             site.set("pos", f"{0.0} {-0.05} -0.3")
             site.set("size", "0.05")
-            site.set("rgba", "1 0 0 1")  # Red color for LiDAR sites
-            site.set("zaxis", f"{cos_angle} {sin_angle} 0")
-
-            
-            rangefinder = ET.Element("rangefinder")  # Create the element
-            rangefinder.set("name", f"lidar_{i}")    # Set attributes
+            site.set("rgba", "1 0 0 1")
+            site.set("zaxis", f"{cos_angle} {sin_angle} 0")  # Point in the ray direction
+                
+            rangefinder = ET.Element("rangefinder")
+            rangefinder.set("name", f"lidar_{i}")
             rangefinder.set("site", f"lidar_site_{i}")
-            sensor.append(rangefinder)              # Append it to the parent element
+            sensor.append(rangefinder)
+            
         return ET.tostring(root, encoding="unicode")
 
     
@@ -297,7 +314,7 @@ class CubeNavigationEnv_class(gym.Env):
             
             # 3. Place obstacles with checks against both cube and sphere
             valid_obstacles = True
-            for i in range(1, 21):
+            for i in range(1, 41):
                 obstacle_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f"obstacle{i}")
                 if obstacle_body_id >= 0:
                     # Find valid position for this obstacle
@@ -517,7 +534,7 @@ class CubeNavigationEnv_class(gym.Env):
 
         too_close_to_obstacles = False
         for i in range(1, len(self.lidar_readings)):
-            if self.lidar_readings[i] < 0.2 and self.lidar_readings[i] > 0.01:
+            if self.lidar_readings[i] < 0.32 and self.lidar_readings[i] > 0.01:
                 reward += -0.1/self.lidar_readings[i]
                 
             elif self.lidar_readings[i] <= 0.01:

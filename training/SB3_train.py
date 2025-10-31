@@ -1,3 +1,11 @@
+import os, sys
+
+# Add the project root directory to Python path
+current_file_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_file_dir)  # Go up one level from training/ to CubeNav-RL/
+sys.path.insert(0, project_root)
+
+
 import numpy as np
 import math
 import time
@@ -17,11 +25,21 @@ from torch.utils.tensorboard import SummaryWriter
 
 from custom_callback import RewardCallback
 
-from CubeNavigationEnv import CubeNavigationEnv_class
+from envs.CubeNavigationEnv import CubeNavigationEnv_class
 
-from custompolicy import TanhActorCriticPolicy
+from policies.custompolicy import TanhActorCriticPolicy
 
 from stable_baselines3.common.callbacks import BaseCallback
+import signal, threading
+
+INTERRUPTED = False
+
+def _handle_sigint(signum, frame):
+    global INTERRUPTED
+    INTERRUPTED = True
+    print("⚠️ Ctrl+c received. The training will stop after the current episode.")
+
+signal.signal(signal.SIGINT, _handle_sigint)
 
 class PolicySaveCallback(BaseCallback):
     def __init__(self, save_freq, save_path, verbose=1):
@@ -37,6 +55,39 @@ class PolicySaveCallback(BaseCallback):
             if self.verbose:
                 print(f"✅ Saved model at step {self.num_timesteps} to {save_file}")
         return True
+
+
+class InterruptSaveCallback(BaseCallback):
+    def __init__(self, run_id: str, save_dir: str = "./policy_checkpoints/", tb_dir: str = "./TENSORBOARD/", verbose=1):
+        super().__init__(verbose)
+        self.run_id = run_id
+        self.save_dir = save_dir
+        self.tb_dir = tb_dir
+        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(tb_dir, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        if INTERRUPTED in globals() and globals()['INTERRUPTED']:
+            # Save the model with a clear name
+            save_file = os.path.join(self.save_dir, f"{self.run_id}_INTERRUPTED_step_{self.num_timesteps}.zip")
+            self.model.save(save_file)
+
+            # Try to save VecNormalize wrapper (if present)
+            try:
+                vec_env = self.model.get_env()
+                if hasattr(vec_env, "save"):
+                    vec_path = os.path.join(self.tb_dir, f"{self.run_id}.pkl")
+                    vec_env.save(vec_path)
+                    if self.verbose:
+                        print(f"💾 Saved VecNormalize to {vec_path}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"⚠️  Could not save VecNormalize: {e}")
+
+            if self.verbose:
+                print(f"✅ Saved interrupted model at step {self.num_timesteps} to {save_file}")
+                print("🛑 Stopping training after Ctrl+C.")
+            return False  # tell SB3 to stop training
 
 
 
@@ -161,16 +212,37 @@ def train_agent(num_rays, model_path="xml_models/obstacles_cube_model.xml", num_
 
     reward_callback = RewardCallback()
 
-
-    callbacks = [checkpoint_callback, reward_callback]
-    
-    # Train the model
-    print(f"Training PPO agent for {num_steps} steps...")
-    model.learn(
-        total_timesteps=num_steps,
-        callback=callbacks,
-        tb_log_name=run_id  # This ensures logs go to the correct subdirectory
+    interrupt_callback = InterruptSaveCallback(
+        run_id=run_id,
+        save_dir="./policy_checkpoints/",
+        tb_dir=log_dir, 
+        verbose=1
     )
+
+
+    callbacks = [checkpoint_callback, reward_callback, interrupt_callback]
+
+    # Train the model
+    print(f"Training agent for {num_steps} steps...")
+
+    try:
+        model.learn(
+            total_timesteps=num_steps,
+            callback=callbacks,
+            tb_log_name=run_id  # This ensures logs go to the correct subdirectory
+        )
+    except KeyboardInterrupt:
+        # Extra safety net in case the callback didn’t get a chance to run
+        interrupted_path = os.path.join("./policy_checkpoints/", f"{run_id}_INTERRUPTED_step_{model.num_timesteps}.zip")
+        os.makedirs(os.path.dirname(interrupted_path), exist_ok=True)
+        model.save(interrupted_path)
+        try:
+            # Save VecNormalize wrapper if present
+            if hasattr(env, "save"):
+                env.save(os.path.join(log_dir, f"{run_id}.pkl"))
+        except Exception as e:
+            print(f"⚠️  Could not save VecNormalize on except: {e}")
+        print(f"\n✅ Interrupted: model saved to {interrupted_path}")
 
     
     # Save the final model
@@ -195,14 +267,14 @@ if __name__ == "__main__":
     name = "DEFAULT"
 
     parser = argparse.ArgumentParser(description="Train a PPO agent to navigate a cube to a target sphere.")
-    parser.add_argument("--num_rays", type=int, default=50, help="Number of LiDAR rays around the sphere.")
+    parser.add_argument("--num_rays", type=int, default=108, help="Number of LiDAR rays around the sphere.")
     parser.add_argument("--model_path", type=str, default="xml_models/obstacles_cube_model.xml", help="Path to the MuJoCo model XML file.")
     parser.add_argument("--num_envs", type=int, default=16, help="Number of parallel environments.")
     parser.add_argument("--train", action="store_true", help="Train the PPO agent.")
     parser.add_argument("--eval", action="store_true", help="Evaluate the PPO agent.")
     parser.add_argument("--num_steps", type=int, default=10000000, help="Number of training steps.")
-    parser.add_argument("--run_id", type=str, default="DEFAULT", help="Run ID for TensorBoard logging.")
-    parser.add_argument("--trainer", type=str, default="PPO", help="Trainer to use (PPO, SAC, TD3, TQC).")
+    parser.add_argument("--run_id", type=str, default="models/DeployTQC", help="Run ID for TensorBoard logging.")
+    parser.add_argument("--trainer", type=str, default="TQC", help="Trainer to use (PPO, SAC, TD3, TQC).")
     args = parser.parse_args()
     
     name = args.run_id
@@ -231,36 +303,26 @@ if __name__ == "__main__":
         training_mode=False
     )])
 
-    # Carica la normalizzazione su DummyVecEnv
-    if os.path.exists(os.path.join("./TENSORBOARD/", f"{args.run_id}.pkl")):
-        eval_env = VecNormalize.load(os.path.join("./TENSORBOARD/", f"{args.run_id}.pkl"), eval_env)
-    else:
-        eval_env = VecNormalize.load(os.path.join("./TENSORBOARD/", "vecnormalize.pkl"), eval_env)
-    eval_env.training = False
-    eval_env.norm_reward = False
+    # Debug: Print observation space shapes
+    print(f"Current observation space shape: {eval_env.observation_space.shape}")
+    
+    # Try to load normalization, but handle shape mismatch
+    try:
+        if os.path.exists(os.path.join("./TENSORBOARD/", f"{args.run_id}.pkl")):
+            vec_normalize = VecNormalize.load(os.path.join("./TENSORBOARD/", f"{args.run_id}.pkl"), eval_env)
+            print(f"Loaded normalization with shape: {vec_normalize.observation_space.shape}")
+        else:
+            vec_normalize = VecNormalize.load(os.path.join("./TENSORBOARD/", "vecnormalize.pkl"), eval_env)
+            print(f"Loaded default normalization with shape: {vec_normalize.observation_space.shape}")
+        eval_env.training = False
+        eval_env.norm_reward = False
+
+    except AssertionError as e:
+        print(f"Shape mismatch error: {e}")
+        print("Using environment without normalization")
     
     # Evaluate the trained agent
-    mean_reward, std_reward, linear_velocities, angular_velocities = evaluate_policy(model, eval_env, n_eval_episodes=200, deterministic=True, print_actions_means=True)
+    mean_reward, std_reward, linear_velocities, angular_velocities = evaluate_policy(model, eval_env, n_eval_episodes=200, deterministic=True)#, print_actions_means=True)
     print(f"Mean reward: {mean_reward}, Std reward: {std_reward}")
 
     eval_env.close()
-
-    # import matplotlib.pyplot as plt
-    
-    # linear_velocities = np.array(linear_velocities)
-    # angular_velocities = np.array(angular_velocities)
-
-    # print(len(linear_velocities))
-    # linear_velocities = 0.31*linear_velocities
-    # angular_velocities = 1.9*angular_velocities
-    
-    # plt.figure(figsize=(8, 6))
-    # plt.plot([0.2, 0.31], [1.9, 0.0], 'ro-', linewidth=2)
-    # plt.scatter(linear_velocities, angular_velocities, alpha=0.2)
-    # plt.xlabel("Linear Velocity")
-    # plt.ylabel("Angular Velocity")
-    # plt.title(f"2D Scatter Plot of Linear vs Angular Velocities with {len(linear_velocities)} points")
-    # plt.grid(True)
-    # plt.tight_layout()
-    # plt.savefig("velocity_scatter.png")
-    # plt.show()
